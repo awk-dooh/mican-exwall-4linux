@@ -1,0 +1,6 @@
+# Core dependency: user-space serial access to the stick's virtual COM port.
+pyserial>=3.5
+
+# Optional: only needed for the SocketCAN bridge (mican_stick2.bridge / `cli bridge`).
+# On Linux this enables candump/cansend/python-can interoperability.
+python-can>=4.0 ; sys_platform == "linux"

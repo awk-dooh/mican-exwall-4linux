@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mican-exwall-4linux"
+version = "1.0.0"
+description = "Robust Linux driver, CLI and SocketCAN bridge for the miControl miCAN-Stick2 USB-CAN gateway."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { file = "LICENSE" }
+authors = [{ name = "awk-dooh (Digital out of Home)" }]
+keywords = ["can", "canopen", "mican", "micontrol", "ds309", "socketcan", "usb"]
+classifiers = [
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Topic :: System :: Hardware :: Hardware Drivers",
+]
+dependencies = ["pyserial>=3.5"]
+
+[project.optional-dependencies]
+bridge = ["python-can>=4.0"]
+dev = ["pytest>=7.0"]
+
+[project.urls]
+Homepage = "https://github.com/awk-dooh/mican-exwall-4linux"
+Issues = "https://github.com/awk-dooh/mican-exwall-4linux/issues"
+
+[project.scripts]
+mican = "mican_stick2.cli:main"
+
+[tool.setuptools]
+packages = ["mican_stick2"]

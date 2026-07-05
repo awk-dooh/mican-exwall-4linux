@@ -42,6 +42,11 @@ You get three things:
 > **Controlling the totem devices?** See [CANOPEN.md](CANOPEN.md) for the
 > ready-made helpers to drive the **mcDSA-E60 servo** (Node 1) and the
 > **mcIO-K1 digital I/O** (Node 4) that hang off the stick in the Exwall totem.
+>
+> **New to this hardware?** Start with
+> [MICONTROL_4_DUMMIES.md](MICONTROL_4_DUMMIES.md) — a plain-language guide to
+> what the totem's miControl devices are, how they're wired, and runnable
+> examples (switch the backlight, read a sensor, spin the fan).
 
 ---
 

@@ -39,6 +39,10 @@ You get three things:
 - an optional **SocketCAN bridge** so standard tools (`candump`, `cansend`,
   `python-can`) can use the stick as if it were a native CAN interface.
 
+> **Controlling the totem devices?** See [CANOPEN.md](CANOPEN.md) for the
+> ready-made helpers to drive the **mcDSA-E60 servo** (Node 1) and the
+> **mcIO-K1 digital I/O** (Node 4) that hang off the stick in the Exwall totem.
+
 ---
 
 ## 2. How the miCAN-Stick2 works

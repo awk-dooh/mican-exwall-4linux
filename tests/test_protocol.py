@@ -181,3 +181,98 @@ def test_canframe_rejects_oversize_std_id():
 def test_canframe_rejects_long_data():
     with pytest.raises(ValueError):
         CanFrame(can_id=0x1, data=bytes(9))
+
+
+# -- CANopen DS402 drive helpers (mcDSA-E60, node 1) -----------------------
+def test_read_int_parses_hex_and_decimal():
+    stick, fake = make()
+    fake.responses.append("0x000F")
+    assert stick.read_int(0x6041, 0, "u16", node=1) == 0x0F
+    fake.responses.append("1234")
+    assert stick.read_int(0x6064, 0, "i32", node=1) == 1234
+
+
+def test_enable_drive_walks_state_machine():
+    stick, fake = make()
+    for _ in range(4):
+        fake.responses.append("OK")
+    stick.enable_drive(node=1, mode=3)
+    assert fake.written == [
+        "1 w 0x6040 0 u16 6",     # shutdown
+        "1 w 0x6040 0 u16 7",     # switch on
+        "1 w 0x6060 0 i8 3",      # profile velocity mode
+        "1 w 0x6040 0 u16 15",    # enable operation
+    ]
+
+
+def test_enable_drive_can_skip_mode():
+    stick, fake = make()
+    for _ in range(3):
+        fake.responses.append("OK")
+    stick.enable_drive(node=1, mode=None)
+    assert fake.written == [
+        "1 w 0x6040 0 u16 6",
+        "1 w 0x6040 0 u16 7",
+        "1 w 0x6040 0 u16 15",
+    ]
+
+
+def test_set_velocity_writes_target_velocity():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.set_velocity(50_000, node=1)
+    assert fake.written == ["1 w 0x60FF 0 i32 50000"]
+
+
+def test_read_statusword_and_position():
+    stick, fake = make()
+    fake.responses.append("0x0637")
+    assert stick.read_statusword(node=1) == 0x0637
+    assert fake.written[-1] == "1 r 0x6041 0 u16"
+    fake.responses.append("-250")
+    assert stick.read_position(node=1) == -250
+    assert fake.written[-1] == "1 r 0x6064 0 i32"
+
+
+def test_is_operation_enabled():
+    stick, fake = make()
+    fake.responses.append("0x0027")  # bits 0,1,2 set, no fault
+    assert stick.is_operation_enabled(node=1) is True
+    fake.responses.append("0x0008")  # fault bit set
+    assert stick.is_operation_enabled(node=1) is False
+
+
+# -- CANopen DS401 I/O helpers (mcIO-K1, node 4) ---------------------------
+def test_set_outputs_writes_8bit_block():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.set_outputs(0x01, node=4)
+    assert fake.written == ["4 w 0x6200 1 u8 1"]
+
+
+def test_read_inputs_low_and_high():
+    stick, fake = make()
+    fake.responses.append("0xA5")
+    assert stick.read_inputs(node=4) == 0xA5
+    assert fake.written[-1] == "4 r 0x6000 1 u8"
+    fake.responses.append("0x03")
+    assert stick.read_inputs(node=4, subindex=2) == 0x03
+    assert fake.written[-1] == "4 r 0x6000 2 u8"
+
+
+def test_identity_reads_1018():
+    stick, fake = make()
+    fake.responses.extend(["0x139", "0x15010001", "0x10203", "0x42"])
+    ident = stick.identity(node=1)
+    assert ident == {
+        "vendor_id": 0x139,
+        "product_code": 0x15010001,
+        "revision": 0x10203,
+        "serial": 0x42,
+    }
+    assert fake.written[-4:] == [
+        "1 r 0x1018 1 u32",
+        "1 r 0x1018 2 u32",
+        "1 r 0x1018 3 u32",
+        "1 r 0x1018 4 u32",
+    ]

@@ -39,6 +39,47 @@ CAN_STD_MASK = 0x7FF
 _BITRATE_KBIT = (1000, 800, 500, 250, 125, 100, 50, 20)
 SUPPORTED_BITRATES = tuple(k * 1000 for k in _BITRATE_KBIT)
 
+# --- CANopen profile object dictionary indices ---------------------------
+# DS402 (drive & motion profile, e.g. mcDSA-E60 servo)
+OD_CONTROLWORD = 0x6040
+OD_STATUSWORD = 0x6041
+OD_MODES_OF_OPERATION = 0x6060
+OD_MODES_OF_OPERATION_DISPLAY = 0x6061
+OD_POSITION_ACTUAL = 0x6064
+OD_VELOCITY_ACTUAL = 0x606C
+OD_TARGET_POSITION = 0x607A
+OD_PROFILE_VELOCITY = 0x6081
+OD_PROFILE_ACCELERATION = 0x6083
+OD_TARGET_TORQUE = 0x6071
+OD_TARGET_VELOCITY = 0x60FF
+# DS401 (generic I/O profile, e.g. mcIO-K1 I/O module)
+OD_DIGITAL_INPUTS = 0x6000
+OD_DIGITAL_OUTPUTS = 0x6200
+# DS301 identity object
+OD_DEVICE_TYPE = 0x1000
+OD_IDENTITY = 0x1018
+
+# DS402 controlword command bit patterns (drive state machine)
+CW_DISABLE_VOLTAGE = 0x0000
+CW_SHUTDOWN = 0x0006
+CW_SWITCH_ON = 0x0007
+CW_ENABLE_OPERATION = 0x000F
+CW_FAULT_RESET = 0x0080
+CW_NEW_SETPOINT = 0x001F   # enable operation + set-point bit (bit 4)
+
+# DS402 modes of operation (object 0x6060)
+MODE_PROFILE_POSITION = 1
+MODE_PROFILE_VELOCITY = 3
+MODE_PROFILE_TORQUE = 4
+MODE_HOMING = 6
+
+# DS402 statusword (0x6041) bit masks
+SW_READY_TO_SWITCH_ON = 1 << 0
+SW_SWITCHED_ON = 1 << 1
+SW_OPERATION_ENABLED = 1 << 2
+SW_FAULT = 1 << 3
+SW_TARGET_REACHED = 1 << 10
+
 
 class ProtocolError(Exception):
     """The device returned a malformed or unexpected response."""
@@ -293,6 +334,140 @@ class MiCanStick2:
         body = (f"{self._addr(node, net)} w 0x{index:X} {subindex} "
                 f"{datatype} {value}")
         self._command(body.strip())
+
+    def read_int(self, index: int, subindex: int, datatype: str = "i32",
+                 node: Optional[int] = None, net: Optional[int] = None) -> int:
+        """Like :meth:`read`, but parse the reply into an ``int``.
+
+        The device returns the value as text, decimal or ``0x``-prefixed hex.
+        """
+        payload = self.read(index, subindex, datatype, node=node, net=net)
+        tokens = payload.split()
+        if not tokens:
+            raise ProtocolError(f"Empty value in read reply: {payload!r}")
+        token = tokens[-1]
+        try:
+            return int(token, 16) if token.lower().startswith("0x") \
+                else int(token, 10)
+        except ValueError as exc:
+            raise ProtocolError(
+                f"Could not parse integer from reply {payload!r}") from exc
+
+    # -- CANopen DS402 drive helpers (e.g. mcDSA-E60) ----------------------
+    def reset_fault(self, node: Optional[int] = None,
+                    net: Optional[int] = None) -> None:
+        """Clear a drive fault (controlword fault-reset edge)."""
+        self.write(OD_CONTROLWORD, 0, "u16", CW_FAULT_RESET, node=node, net=net)
+
+    def set_mode(self, mode: int, node: Optional[int] = None,
+                 net: Optional[int] = None) -> None:
+        """Set DS402 modes of operation (object 0x6060)."""
+        self.write(OD_MODES_OF_OPERATION, 0, "i8", mode, node=node, net=net)
+
+    def enable_drive(self, node: Optional[int] = None, *,
+                     mode: Optional[int] = MODE_PROFILE_VELOCITY,
+                     net: Optional[int] = None) -> None:
+        """Walk the DS402 state machine to *Operation enabled*.
+
+        Sequence: Shutdown (0x06) -> Switch on (0x07) -> [set mode] ->
+        Enable operation (0x0F). Pass ``mode=None`` to leave the current mode
+        untouched.
+        """
+        self.write(OD_CONTROLWORD, 0, "u16", CW_SHUTDOWN, node=node, net=net)
+        self.write(OD_CONTROLWORD, 0, "u16", CW_SWITCH_ON, node=node, net=net)
+        if mode is not None:
+            self.set_mode(mode, node=node, net=net)
+        self.write(OD_CONTROLWORD, 0, "u16", CW_ENABLE_OPERATION,
+                   node=node, net=net)
+
+    def disable_drive(self, node: Optional[int] = None,
+                      net: Optional[int] = None) -> None:
+        """Disable the drive output stage (controlword disable-voltage)."""
+        self.write(OD_CONTROLWORD, 0, "u16", CW_DISABLE_VOLTAGE,
+                   node=node, net=net)
+
+    def set_velocity(self, velocity: int, node: Optional[int] = None,
+                     net: Optional[int] = None) -> None:
+        """Set target velocity (object 0x60FF, Profile Velocity mode)."""
+        self.write(OD_TARGET_VELOCITY, 0, "i32", velocity, node=node, net=net)
+
+    def set_target_position(self, position: int, node: Optional[int] = None, *,
+                            relative: bool = False,
+                            net: Optional[int] = None) -> None:
+        """Set target position (0x607A) and trigger a Profile Position move.
+
+        Toggles the controlword *new set-point* bit (bit 4) so the drive
+        latches the new target. ``relative=True`` sets bit 6.
+        """
+        self.write(OD_TARGET_POSITION, 0, "i32", position, node=node, net=net)
+        cw = CW_NEW_SETPOINT | (0x0040 if relative else 0)
+        self.write(OD_CONTROLWORD, 0, "u16", cw, node=node, net=net)
+        # drop the set-point bit again, leaving the drive enabled
+        self.write(OD_CONTROLWORD, 0, "u16", CW_ENABLE_OPERATION,
+                   node=node, net=net)
+
+    def read_statusword(self, node: Optional[int] = None,
+                        net: Optional[int] = None) -> int:
+        """Read the DS402 statusword (object 0x6041)."""
+        return self.read_int(OD_STATUSWORD, 0, "u16", node=node, net=net)
+
+    def read_position(self, node: Optional[int] = None,
+                      net: Optional[int] = None) -> int:
+        """Read the actual position (object 0x6064)."""
+        return self.read_int(OD_POSITION_ACTUAL, 0, "i32", node=node, net=net)
+
+    def read_velocity(self, node: Optional[int] = None,
+                      net: Optional[int] = None) -> int:
+        """Read the actual velocity (object 0x606C)."""
+        return self.read_int(OD_VELOCITY_ACTUAL, 0, "i32", node=node, net=net)
+
+    def is_operation_enabled(self, node: Optional[int] = None,
+                             net: Optional[int] = None) -> bool:
+        """True if the drive reports *Operation enabled* and no fault."""
+        sw = self.read_statusword(node=node, net=net)
+        return bool(sw & SW_OPERATION_ENABLED) and not bool(sw & SW_FAULT)
+
+    # -- CANopen DS401 digital I/O helpers (e.g. mcIO-K1) ------------------
+    def set_outputs(self, mask: int, node: Optional[int] = None, *,
+                    subindex: int = 1, net: Optional[int] = None) -> None:
+        """Write an 8-bit digital output block (object 0x6200).
+
+        For the mcIO-K1, ``subindex=1`` drives Dout0..3 (bits 0..3).
+        """
+        self.write(OD_DIGITAL_OUTPUTS, subindex, "u8", mask & 0xFF,
+                   node=node, net=net)
+
+    def read_outputs(self, node: Optional[int] = None, *,
+                     subindex: int = 1, net: Optional[int] = None) -> int:
+        """Read back a digital output block (object 0x6200)."""
+        return self.read_int(OD_DIGITAL_OUTPUTS, subindex, "u8",
+                             node=node, net=net)
+
+    def read_inputs(self, node: Optional[int] = None, *,
+                    subindex: int = 1, net: Optional[int] = None) -> int:
+        """Read an 8-bit digital input block (object 0x6000).
+
+        For the mcIO-K1: ``subindex=1`` = Din0..7, ``subindex=2`` = Din8..11.
+        """
+        return self.read_int(OD_DIGITAL_INPUTS, subindex, "u8",
+                             node=node, net=net)
+
+    # -- CANopen identity --------------------------------------------------
+    def device_type(self, node: Optional[int] = None,
+                    net: Optional[int] = None) -> int:
+        """Read object 0x1000 (device type / supported profile)."""
+        return self.read_int(OD_DEVICE_TYPE, 0, "u32", node=node, net=net)
+
+    def identity(self, node: Optional[int] = None,
+                 net: Optional[int] = None) -> dict:
+        """Read the DS301 identity object (0x1018): vendor/product/rev/serial."""
+        return {
+            "vendor_id": self.read_int(OD_IDENTITY, 1, "u32", node=node, net=net),
+            "product_code": self.read_int(OD_IDENTITY, 2, "u32",
+                                          node=node, net=net),
+            "revision": self.read_int(OD_IDENTITY, 3, "u32", node=node, net=net),
+            "serial": self.read_int(OD_IDENTITY, 4, "u32", node=node, net=net),
+        }
 
     # -- raw CAN -----------------------------------------------------------
     def send_frame(self, frame: CanFrame, net: Optional[int] = None) -> None:

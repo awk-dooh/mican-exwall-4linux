@@ -276,3 +276,77 @@ def test_identity_reads_1018():
         "1 r 0x1018 3 u32",
         "1 r 0x1018 4 u32",
     ]
+
+
+# -- mcDSA-Exx manufacturer-specific (0x3000 profile) ----------------------
+def test_device_command_and_clear_error():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.clear_error(node=1)
+    assert fake.written == ["1 w 0x3000 0 u8 1"]
+
+
+def test_enable_output_native():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.enable_output(True, node=1)
+    assert fake.written[-1] == "1 w 0x3004 0 u8 1"
+    fake.responses.append("OK")
+    stick.enable_output(False, node=1)
+    assert fake.written[-1] == "1 w 0x3004 0 u8 0"
+
+
+def test_set_pwm_frequency_valid_and_invalid():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.set_pwm_frequency(25000, node=1)
+    assert fake.written == ["1 w 0x3830 0 u32 25000"]
+    with pytest.raises(ValueError):
+        stick.set_pwm_frequency(30000, node=1)
+
+
+def test_set_current_limits_symmetric_and_asymmetric():
+    stick, fake = make()
+    fake.responses.extend(["OK", "OK"])
+    stick.set_current_limits(5000, node=1)
+    assert fake.written[-2:] == [
+        "1 w 0x3221 0 u32 5000",
+        "1 w 0x3223 0 u32 5000",
+    ]
+    fake.responses.extend(["OK", "OK"])
+    stick.set_current_limits(5000, 3000, node=1)
+    assert fake.written[-2:] == [
+        "1 w 0x3221 0 u32 5000",
+        "1 w 0x3223 0 u32 3000",
+    ]
+
+
+def test_set_velocity_gains():
+    stick, fake = make()
+    fake.responses.extend(["OK", "OK", "OK", "OK"])
+    stick.set_velocity_gains(100, 20, kd=5, kvff=1000, node=1)
+    assert fake.written == [
+        "1 w 0x3310 0 i32 100",
+        "1 w 0x3311 0 i32 20",
+        "1 w 0x3312 0 i32 5",
+        "1 w 0x3314 0 u16 1000",
+    ]
+
+
+def test_configure_motor_writes_only_given():
+    stick, fake = make()
+    fake.responses.extend(["OK", "OK", "OK"])
+    stick.configure_motor(motor_type=1, pole_count=8,
+                          encoder_resolution=4096, node=1)
+    assert fake.written == [
+        "1 w 0x3900 0 u8 1",       # BLDC
+        "1 w 0x3910 0 u8 8",       # pole count
+        "1 w 0x3962 0 u32 4096",   # encoder resolution
+    ]
+
+
+def test_store_parameters_uses_dev_cmd():
+    stick, fake = make()
+    fake.responses.append("OK")
+    stick.store_parameters(node=1)
+    assert fake.written == ["1 w 0x3000 0 u8 128"]   # 0x80 CMD_StoreParam

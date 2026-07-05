@@ -158,3 +158,99 @@ Equivalent raw stick commands:
   cleared with `reset_fault` first.
 - All commands go through the single serial connection to the stick; address the
   target with the `node=` argument (1 = servo, 4 = I/O).
+
+---
+
+## Node 1 — mcDSA-E60 manufacturer-specific commissioning (0x3000 profile)
+
+Beyond the standard DS402 objects, the mcDSA exposes miControl's native
+parameter set for **motor setup, current limits, PWM and control-loop tuning**.
+These were extracted from the decompiled `mcManual`
+(*content_mcDSA-Exx_Parameter 3000h*).
+
+> **Change motor/PWM parameters only while the output stage is disabled**
+> (`disable_drive` / `enable_output(False)`), then persist them with
+> `store_parameters` (which takes a few seconds).
+
+### Objects
+
+| Object | Sub | Type | Name | Meaning / range |
+|--------|-----|------|------|-----------------|
+| `0x3000` | 0 | u8  | DEV_Cmd | device command (see below) |
+| `0x3004` | 0 | u8  | DEV_Enable | native output enable `{0,1}` |
+| `0x3210` | 0 | i32 | CURR_Kp | current controller P |
+| `0x3211` | 0 | i32 | CURR_Ki | current controller I |
+| `0x3221` | 0 | u32 | CURR_LimitMaxPos | current limit + (device max applies) |
+| `0x3223` | 0 | u32 | CURR_LimitMaxNeg | current limit − |
+| `0x3310` | 0 | i32 | VEL_Kp | vel/pos controller P |
+| `0x3311` | 0 | i32 | VEL_Ki | vel/pos controller I |
+| `0x3312` | 0 | i32 | VEL_Kd | vel/pos controller D |
+| `0x3314` | 0 | u16 | VEL_Kvff | velocity feed-forward `[0..2000]` |
+| `0x3350` | 0 | u32 | VEL_Feedback | feedback source (encoder/hall/EMK) |
+| `0x3830` | 0 | u32 | PWM_Frequency | `{12500,25000,32000,50000,100000,200000}` Hz, default 25000 |
+| `0x3900` | 0 | u8  | MOTOR_Type | `0`=DC, `1`=BLDC |
+| `0x3901` | 0 | u16 | MOTOR_Nn | nominal speed `[0..30000]` rpm |
+| `0x3902` | 0 | u16 | MOTOR_Un | nominal voltage `[0..60000]` |
+| `0x3910` | 0 | u8  | MOTOR_PolN | pole count `[1..100]` |
+| `0x3911` | 0 | u16 | MOTOR_Polarity | direction/polarity bitfield |
+| `0x3962` | 0 | u32 | MOTOR_ENC_Resolution | encoder increments |
+| `0x5000` | 0 | i16 | MPU_Cmd | on-device MPU program control |
+
+### DEV_Cmd (`0x3000`) values
+
+| Value | Name | Effect |
+|-------|------|--------|
+| `0x01` | ClearError | clear fault (re-enables if it was enabled) |
+| `0x02` | QuickStop | stop on quick-stop ramp |
+| `0x03` | Halt | stop on normal ramp |
+| `0x04` | Continue | resume after halt/quick-stop |
+| `0x05` | Update | apply new motion setpoints |
+| `0x80` | StoreParam | **save** 0x3000-range params to EEPROM |
+| `0x81` | RestoreParam | reload params from EEPROM |
+| `0x82` | DefaultParam | reset params to defaults (RAM only) |
+| `0x83` | ClearParam | default + store |
+
+### Convenience helpers
+
+```python
+NODE = 1
+stick.enable_output(False, node=NODE)             # disable before config
+
+stick.configure_motor(
+    motor_type=1,              # BLDC
+    pole_count=8,
+    nominal_speed=3000,        # rpm
+    encoder_resolution=4096,
+    node=NODE,
+)
+stick.set_pwm_frequency(25000, node=NODE)
+stick.set_current_limits(5000, node=NODE)         # +/- (device max applies)
+stick.set_current_gains(kp=200, ki=50, node=NODE)
+stick.set_velocity_gains(kp=100, ki=20, kd=5, kvff=1000, node=NODE)
+
+stick.store_parameters(node=NODE)                 # persist to EEPROM (~seconds)
+
+# runtime motion control via the native command interface:
+stick.enable_output(True, node=NODE)
+stick.clear_error(node=NODE)
+stick.quick_stop(node=NODE)
+stick.halt(node=NODE)
+stick.continue_motion(node=NODE)
+```
+
+Equivalent raw stick commands:
+
+```
+1 w 0x3004 0 u8 0        # disable output
+1 w 0x3900 0 u8 1        # BLDC
+1 w 0x3910 0 u8 8        # pole count
+1 w 0x3830 0 u32 25000   # PWM 25 kHz
+1 w 0x3221 0 u32 5000    # current limit +
+1 w 0x3223 0 u32 5000    # current limit -
+1 w 0x3310 0 i32 100     # VEL_Kp
+1 w 0x3000 0 u8 128      # StoreParam (0x80)
+```
+
+> These parameters and ranges are transcribed from the decompiled manual and
+> apply to the mcDSA-Exx family. The **absolute current maximum is
+> device-specific** (mcDSA-E60) — see its datasheet before raising limits.

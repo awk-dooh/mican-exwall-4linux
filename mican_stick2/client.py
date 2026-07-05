@@ -80,6 +80,58 @@ SW_OPERATION_ENABLED = 1 << 2
 SW_FAULT = 1 << 3
 SW_TARGET_REACHED = 1 << 10
 
+# --- mcDSA-Exx manufacturer-specific objects (0x3000 profile) -------------
+# Source: decompiled mcManual (content_mcDSA-Exx_Parameter 3000h). Only the
+# commonly needed commissioning objects are named here; see CANOPEN.md.
+OD_DEV_CMD = 0x3000            # u8  device command (see DEV_CMD_*)
+OD_DEV_ENABLE = 0x3004        # u8  output-stage enable {0,1} (native)
+OD_CURR_KP = 0x3210           # i32 current controller P
+OD_CURR_KI = 0x3211           # i32 current controller I
+OD_CURR_LIMIT_MAX_POS = 0x3221  # u32 current limit, positive
+OD_CURR_LIMIT_MAX_NEG = 0x3223  # u32 current limit, negative
+OD_VEL_KP = 0x3310            # i32 velocity/position controller P
+OD_VEL_KI = 0x3311            # i32 velocity/position controller I
+OD_VEL_KD = 0x3312            # i32 velocity/position controller D
+OD_VEL_KVFF = 0x3314          # u16 velocity feed-forward [0..2000]
+OD_VEL_FEEDBACK = 0x3350      # u32 velocity feedback source
+OD_SVEL_FEEDBACK = 0x3550     # u32 SVel feedback source
+OD_PWM_FREQUENCY = 0x3830     # u32 PWM frequency (Hz)
+OD_MOTOR_TYPE = 0x3900        # u8  0=DC, 1=BLDC
+OD_MOTOR_NN = 0x3901          # u16 nominal speed [0..30000] rpm
+OD_MOTOR_UN = 0x3902          # u16 nominal voltage [0..60000]
+OD_MOTOR_POLN = 0x3910        # u8  pole count [1..100]
+OD_MOTOR_POLARITY = 0x3911    # u16 motor polarity bitfield
+OD_MOTOR_ENC_RESOLUTION = 0x3962  # u32 encoder resolution (increments)
+OD_MPU_CMD = 0x5000           # i16 MPU program command (see MPU_CMD_*)
+
+# DEV_Cmd (0x3000) command values
+DEV_CMD_NOP = 0x00
+DEV_CMD_CLEAR_ERROR = 0x01
+DEV_CMD_QUICK_STOP = 0x02
+DEV_CMD_HALT = 0x03
+DEV_CMD_CONTINUE = 0x04
+DEV_CMD_UPDATE = 0x05
+DEV_CMD_STORE_PARAM = 0x80     # save 0x3000-range params to EEPROM (slow!)
+DEV_CMD_RESTORE_PARAM = 0x81   # reload params from EEPROM
+DEV_CMD_DEFAULT_PARAM = 0x82   # reset params to defaults (RAM only)
+DEV_CMD_CLEAR_PARAM = 0x83     # default + store
+
+# MPU_Cmd (0x5000) program command values
+MPU_CMD_CLEAR_ERROR = 0x01
+MPU_CMD_START = 0x02
+MPU_CMD_BREAK = 0x03
+MPU_CMD_CONTINUE = 0x04
+MPU_CMD_STORE = 0x80
+MPU_CMD_RESTORE = 0x81
+
+# MOTOR_Type (0x3900) values
+MOTOR_TYPE_DC = 0
+MOTOR_TYPE_BLDC = 1
+
+# PWM_Frequency (0x3830) permitted values, in Hz
+# (100000/200000 need firmware >= 1.93.00.CD; 200000 only mcDSA-E65)
+PWM_FREQUENCIES = (12500, 25000, 32000, 50000, 100000, 200000)
+
 
 class ProtocolError(Exception):
     """The device returned a malformed or unexpected response."""
@@ -321,19 +373,21 @@ class MiCanStick2:
 
     # -- CANopen SDO -------------------------------------------------------
     def read(self, index: int, subindex: int, datatype: str = "i32",
-             node: Optional[int] = None, net: Optional[int] = None) -> str:
+             node: Optional[int] = None, net: Optional[int] = None,
+             timeout: Optional[float] = None) -> str:
         """``[[net] node] r <index> <subindex> <datatype>`` (SDO read)."""
         node = self._node if node is None else node
         body = f"{self._addr(node, net)} r 0x{index:X} {subindex} {datatype}"
-        return self._command(body.strip())
+        return self._command(body.strip(), timeout=timeout)
 
     def write(self, index: int, subindex: int, datatype: str, value: int,
-              node: Optional[int] = None, net: Optional[int] = None) -> None:
+              node: Optional[int] = None, net: Optional[int] = None,
+              timeout: Optional[float] = None) -> None:
         """``[[net] node] w <index> <subindex> <datatype> <value>`` (SDO write)."""
         node = self._node if node is None else node
         body = (f"{self._addr(node, net)} w 0x{index:X} {subindex} "
                 f"{datatype} {value}")
-        self._command(body.strip())
+        self._command(body.strip(), timeout=timeout)
 
     def read_int(self, index: int, subindex: int, datatype: str = "i32",
                  node: Optional[int] = None, net: Optional[int] = None) -> int:
@@ -468,6 +522,139 @@ class MiCanStick2:
             "revision": self.read_int(OD_IDENTITY, 3, "u32", node=node, net=net),
             "serial": self.read_int(OD_IDENTITY, 4, "u32", node=node, net=net),
         }
+
+    # -- mcDSA-Exx manufacturer-specific (0x3000 profile) ------------------
+    # Typed helpers for the servo commissioning objects. These target the
+    # miControl-native parameter set (see CANOPEN.md), complementing the
+    # generic DS402 helpers above.
+
+    def device_command(self, command: int, node: Optional[int] = None, *,
+                       net: Optional[int] = None,
+                       timeout: Optional[float] = None) -> None:
+        """Execute a DEV_Cmd (object 0x3000) — see ``DEV_CMD_*`` constants."""
+        self.write(OD_DEV_CMD, 0, "u8", command, node=node, net=net,
+                   timeout=timeout)
+
+    def clear_error(self, node: Optional[int] = None,
+                    net: Optional[int] = None) -> None:
+        """Clear a drive error (DEV_Cmd CMD_ClearError)."""
+        self.device_command(DEV_CMD_CLEAR_ERROR, node=node, net=net)
+
+    def quick_stop(self, node: Optional[int] = None,
+                   net: Optional[int] = None) -> None:
+        """Quick-stop the motor along the quick-stop ramp (DEV_Cmd)."""
+        self.device_command(DEV_CMD_QUICK_STOP, node=node, net=net)
+
+    def halt(self, node: Optional[int] = None,
+             net: Optional[int] = None) -> None:
+        """Halt the motor along the normal ramp (DEV_Cmd)."""
+        self.device_command(DEV_CMD_HALT, node=node, net=net)
+
+    def continue_motion(self, node: Optional[int] = None,
+                        net: Optional[int] = None) -> None:
+        """Resume motion after halt/quick-stop (DEV_Cmd CMD_Continue)."""
+        self.device_command(DEV_CMD_CONTINUE, node=node, net=net)
+
+    def update_setpoints(self, node: Optional[int] = None,
+                         net: Optional[int] = None) -> None:
+        """Apply new motion setpoints (DEV_Cmd CMD_Update)."""
+        self.device_command(DEV_CMD_UPDATE, node=node, net=net)
+
+    def enable_output(self, on: bool = True, node: Optional[int] = None,
+                      net: Optional[int] = None) -> None:
+        """Enable/disable the output stage via native DEV_Enable (0x3004)."""
+        self.write(OD_DEV_ENABLE, 0, "u8", 1 if on else 0, node=node, net=net)
+
+    def store_parameters(self, node: Optional[int] = None, *,
+                         net: Optional[int] = None,
+                         timeout: float = 8.0) -> None:
+        """Persist the 0x3000-range parameters to EEPROM (takes seconds)."""
+        self.device_command(DEV_CMD_STORE_PARAM, node=node, net=net,
+                            timeout=timeout)
+
+    def restore_parameters(self, node: Optional[int] = None, *,
+                           net: Optional[int] = None,
+                           timeout: float = 8.0) -> None:
+        """Reload parameters from EEPROM (takes seconds)."""
+        self.device_command(DEV_CMD_RESTORE_PARAM, node=node, net=net,
+                            timeout=timeout)
+
+    def default_parameters(self, node: Optional[int] = None, *,
+                           net: Optional[int] = None,
+                           timeout: float = 8.0) -> None:
+        """Reset parameters to defaults in RAM (not stored; takes seconds)."""
+        self.device_command(DEV_CMD_DEFAULT_PARAM, node=node, net=net,
+                            timeout=timeout)
+
+    def set_pwm_frequency(self, hz: int, node: Optional[int] = None,
+                          net: Optional[int] = None) -> None:
+        """Set PWM frequency (object 0x3830). Only allowed when disabled."""
+        if hz not in PWM_FREQUENCIES:
+            raise ValueError(
+                f"Unsupported PWM frequency {hz} Hz; choose from "
+                f"{PWM_FREQUENCIES}")
+        self.write(OD_PWM_FREQUENCY, 0, "u32", hz, node=node, net=net)
+
+    def set_current_limits(self, positive: int, negative: Optional[int] = None,
+                           node: Optional[int] = None,
+                           net: Optional[int] = None) -> None:
+        """Set the max current limits (objects 0x3221 / 0x3223).
+
+        The device-specific maximum applies (see the drive's technical data).
+        If ``negative`` is omitted, ``positive`` is used for both directions.
+        """
+        if negative is None:
+            negative = positive
+        self.write(OD_CURR_LIMIT_MAX_POS, 0, "u32", positive, node=node, net=net)
+        self.write(OD_CURR_LIMIT_MAX_NEG, 0, "u32", negative, node=node, net=net)
+
+    def set_current_gains(self, kp: int, ki: int, node: Optional[int] = None,
+                          net: Optional[int] = None) -> None:
+        """Set the PI current-controller gains (objects 0x3210 / 0x3211)."""
+        self.write(OD_CURR_KP, 0, "i32", kp, node=node, net=net)
+        self.write(OD_CURR_KI, 0, "i32", ki, node=node, net=net)
+
+    def set_velocity_gains(self, kp: int, ki: int,
+                           kd: Optional[int] = None,
+                           kvff: Optional[int] = None,
+                           node: Optional[int] = None,
+                           net: Optional[int] = None) -> None:
+        """Set the PID velocity/position-controller gains (0x3310..0x3314)."""
+        self.write(OD_VEL_KP, 0, "i32", kp, node=node, net=net)
+        self.write(OD_VEL_KI, 0, "i32", ki, node=node, net=net)
+        if kd is not None:
+            self.write(OD_VEL_KD, 0, "i32", kd, node=node, net=net)
+        if kvff is not None:
+            self.write(OD_VEL_KVFF, 0, "u16", kvff, node=node, net=net)
+
+    def configure_motor(self, *, motor_type: Optional[int] = None,
+                        pole_count: Optional[int] = None,
+                        nominal_speed: Optional[int] = None,
+                        nominal_voltage: Optional[int] = None,
+                        encoder_resolution: Optional[int] = None,
+                        polarity: Optional[int] = None,
+                        node: Optional[int] = None,
+                        net: Optional[int] = None) -> None:
+        """Write the basic motor parameters (only the given ones).
+
+        Maps to MOTOR_Type (0x3900), MOTOR_PolN (0x3910), MOTOR_Nn (0x3901),
+        MOTOR_Un (0x3902), MOTOR_ENC_Resolution (0x3962), MOTOR_Polarity
+        (0x3911). Change these only while the output stage is disabled.
+        """
+        if motor_type is not None:
+            self.write(OD_MOTOR_TYPE, 0, "u8", motor_type, node=node, net=net)
+        if pole_count is not None:
+            self.write(OD_MOTOR_POLN, 0, "u8", pole_count, node=node, net=net)
+        if nominal_speed is not None:
+            self.write(OD_MOTOR_NN, 0, "u16", nominal_speed, node=node, net=net)
+        if nominal_voltage is not None:
+            self.write(OD_MOTOR_UN, 0, "u16", nominal_voltage,
+                       node=node, net=net)
+        if encoder_resolution is not None:
+            self.write(OD_MOTOR_ENC_RESOLUTION, 0, "u32", encoder_resolution,
+                       node=node, net=net)
+        if polarity is not None:
+            self.write(OD_MOTOR_POLARITY, 0, "u16", polarity, node=node, net=net)
 
     # -- raw CAN -----------------------------------------------------------
     def send_frame(self, frame: CanFrame, net: Optional[int] = None) -> None:

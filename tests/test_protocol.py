@@ -350,3 +350,13 @@ def test_store_parameters_uses_dev_cmd():
     fake.responses.append("OK")
     stick.store_parameters(node=1)
     assert fake.written == ["1 w 0x3000 0 u8 128"]   # 0x80 CMD_StoreParam
+
+
+def test_read_analog_input_returns_mv():
+    stick, fake = make()
+    fake.responses.append("2345")
+    assert stick.read_analog_input(0, node=1) == 2345
+    assert fake.written[-1] == "1 r 0x3100 0 i16"
+    fake.responses.append("-100")
+    assert stick.read_analog_input(1, node=1) == -100
+    assert fake.written[-1] == "1 r 0x3101 0 i16"

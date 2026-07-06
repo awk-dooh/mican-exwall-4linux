@@ -178,6 +178,8 @@ These were extracted from the decompiled `mcManual`
 |--------|-----|------|------|-----------------|
 | `0x3000` | 0 | u8  | DEV_Cmd | device command (see below) |
 | `0x3004` | 0 | u8  | DEV_Enable | native output enable `{0,1}` |
+| `0x3100` | 0 | i16 | IO_AIN0 | analog input 0 in mV `[-10000..10000]` (NTC temp sensor) |
+| `0x3101` | 0 | i16 | IO_AIN1 | analog input 1 in mV |
 | `0x3210` | 0 | i32 | CURR_Kp | current controller P |
 | `0x3211` | 0 | i32 | CURR_Ki | current controller I |
 | `0x3221` | 0 | u32 | CURR_LimitMaxPos | current limit + (device max applies) |
@@ -229,6 +231,9 @@ stick.set_current_gains(kp=200, ki=50, node=NODE)
 stick.set_velocity_gains(kp=100, ki=20, kd=5, kvff=1000, node=NODE)
 
 stick.store_parameters(node=NODE)                 # persist to EEPROM (~seconds)
+
+# read the NTC temperature sensor on analog input 0 (millivolts):
+mv = stick.read_analog_input(0, node=NODE)
 
 # runtime motion control via the native command interface:
 stick.enable_output(True, node=NODE)

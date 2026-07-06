@@ -187,11 +187,34 @@ If it refuses to move, clear any latched fault first:
 stick.reset_fault(node=FAN)
 ```
 
-### 4.5 A tiny "keep the totem happy" loop
+### 4.5 Read the temperature sensor (mcDSA-E60, Node 1)
+
+The 10 kΩ NTC temperature sensor is wired to the drive's **analog input 0**
+(`IO_AIN0`, object `0x3100`). The drive reports the voltage in **millivolts**:
+
+```python
+FAN = 1
+
+millivolts = stick.read_analog_input(0, node=FAN)   # e.g. 2345 = 2.345 V
+print(f"sensor = {millivolts} mV")
+```
+
+That's the *raw voltage*. To turn it into °C you apply the NTC's conversion
+curve (from the sensor's datasheet). A simple placeholder:
+
+```python
+def mv_to_celsius(mv):
+    # TODO: replace with the real NTC curve for the fitted sensor
+    return (mv - 500) / 20.0
+
+print("approx temp:", mv_to_celsius(millivolts), "°C")
+```
+
+### 4.6 A tiny "keep the totem happy" loop
 
 This ties it together: if the surge protector is OK, make sure the backlight is
-on; otherwise switch it off. (Add your own temperature-based fan logic once
-you've confirmed the sensor object with miControl.)
+on; otherwise switch it off. It also speeds the fan up when the sensor voltage
+rises (hotter):
 
 ```python
 import time
@@ -202,20 +225,26 @@ FAN, IO = 1, 4
 with MiCanStick2(port="/dev/mican0") as stick:
     stick.set_bitrate(1_000_000)
     stick.start(0)
+    stick.enable_drive(node=FAN, mode=3)      # ready the fan
 
     backlight_on = False
     while True:
         inputs = stick.read_inputs(node=IO)
-        power_ok = bool(inputs & 0x01)        # Din0 = overvoltage status
+        power_ok = bool(inputs & 0x01)         # Din0 = overvoltage status
 
         if power_ok and not backlight_on:
-            stick.set_outputs(0x08, node=IO)  # backlight ON
+            stick.set_outputs(0x08, node=IO)   # backlight ON
             backlight_on = True
             print("Backlight ON")
         elif not power_ok and backlight_on:
-            stick.set_outputs(0x00, node=IO)  # backlight OFF
+            stick.set_outputs(0x00, node=IO)   # backlight OFF
             backlight_on = False
             print("Power problem — backlight OFF")
+
+        # crude temperature-driven fan: hotter sensor -> faster fan
+        mv = stick.read_analog_input(0, node=FAN)
+        speed = max(10_000, min(40_000, mv * 10))
+        stick.set_velocity(speed, node=FAN)
 
         time.sleep(2)
 ```
@@ -232,6 +261,7 @@ Run it with `python3 keep_totem_happy.py`. Press Ctrl-C to stop.
 | read a status input | mcIO-K1 | 4 | `read_inputs(node=4)` |
 | start / stop the fan | mcDSA-E60 | 1 | `enable_drive(node=1)` / `set_velocity(v, node=1)` |
 | check the fan is running | mcDSA-E60 | 1 | `is_operation_enabled(node=1)` |
+| read the temperature sensor | mcDSA-E60 | 1 | `read_analog_input(0, node=1)` (mV) |
 | clear a drive fault | mcDSA-E60 | 1 | `reset_fault(node=1)` |
 | identify a device | either | 1 or 4 | `identity(node=…)` |
 

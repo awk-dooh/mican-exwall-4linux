@@ -103,6 +103,7 @@ OD_MOTOR_POLN = 0x3910        # u8  pole count [1..100]
 OD_MOTOR_POLARITY = 0x3911    # u16 motor polarity bitfield
 OD_MOTOR_ENC_RESOLUTION = 0x3962  # u32 encoder resolution (increments)
 OD_MPU_CMD = 0x5000           # i16 MPU program command (see MPU_CMD_*)
+OD_ANALOG_INPUT = 0x3100      # i16 IO_AIN0 (mV); channel n = 0x3100 + n
 
 # DEV_Cmd (0x3000) command values
 DEV_CMD_NOP = 0x00
@@ -626,6 +627,16 @@ class MiCanStick2:
             self.write(OD_VEL_KD, 0, "i32", kd, node=node, net=net)
         if kvff is not None:
             self.write(OD_VEL_KVFF, 0, "u16", kvff, node=node, net=net)
+
+    def read_analog_input(self, channel: int = 0, node: Optional[int] = None,
+                          net: Optional[int] = None) -> int:
+        """Read an analog input in millivolts (IO_AIN, object 0x3100 + channel).
+
+        On the totem's mcDSA-E60, channel 0 is the 10 kΩ NTC temperature sensor.
+        Returns a signed value in mV (range -10000..10000).
+        """
+        return self.read_int(OD_ANALOG_INPUT + channel, 0, "i16",
+                             node=node, net=net)
 
     def configure_motor(self, *, motor_type: Optional[int] = None,
                         pole_count: Optional[int] = None,

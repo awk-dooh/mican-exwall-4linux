@@ -111,6 +111,63 @@ def cmd_bridge(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_io(args: argparse.Namespace) -> int:
+    """Read/write the mcIO-K1 digital I/O (default Node 4)."""
+    node = args.node if args.node else 4
+    with _make_stick(args) as stick:
+        if args.bitrate:
+            stick.set_bitrate(args.bitrate)
+        if args.backlight is not None:
+            mask = 0x08 if args.backlight == "on" else 0x00
+            stick.set_outputs(mask, node=node)
+            print(f"Edge backlight (Dout3) -> {args.backlight}")
+        if args.set is not None:
+            mask = int(args.set, 0)
+            stick.set_outputs(mask, node=node)
+            print(f"Outputs Dout0..3 -> 0b{mask & 0x0F:04b}")
+        # Always show the current state.
+        low = stick.read_inputs(node=node)
+        high = stick.read_inputs(node=node, subindex=2)
+        outs = stick.read_outputs(node=node)
+        print(f"Din0..7  = 0b{low:08b} (0x{low:02X})")
+        print(f"Din8..11 = 0b{high & 0x0F:04b}")
+        print(f"Dout0..3 = 0b{outs & 0x0F:04b}")
+    return 0
+
+
+def cmd_fan(args: argparse.Namespace) -> int:
+    """Control the mcDSA-E60 servo/fan drive (default Node 1)."""
+    node = args.node if args.node else 1
+    with _make_stick(args) as stick:
+        if args.bitrate:
+            stick.set_bitrate(args.bitrate)
+        if args.reset_fault:
+            stick.reset_fault(node=node)
+            print("Fault reset.")
+        if args.stop:
+            stick.set_velocity(0, node=node)
+            stick.disable_drive(node=node)
+            print("Drive stopped and disabled.")
+        elif args.start or args.speed is not None:
+            stick.start(node)
+            stick.enable_drive(node=node, mode=3)  # profile velocity
+            if args.speed is not None:
+                stick.set_velocity(args.speed, node=node)
+                print(f"Running at {args.speed}.")
+            else:
+                print("Drive enabled (velocity mode).")
+        # Always show status.
+        sw = stick.read_statusword(node=node)
+        print(f"statusword = 0x{sw:04X}  "
+              f"(operation_enabled={stick.is_operation_enabled(node=node)})")
+        try:
+            mv = stick.read_analog_input(0, node=node)
+            print(f"sensor ain0 = {mv} mV")
+        except Exception:  # noqa: BLE001 - sensor may be absent
+            pass
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="mican_stick2",
@@ -162,6 +219,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp_bridge.add_argument("--can", default="vcan0",
                            help="SocketCAN channel (default: vcan0).")
     sp_bridge.set_defaults(func=cmd_bridge)
+
+    sp_io = sub.add_parser("io", parents=[common],
+                           help="Read/write mcIO-K1 digital I/O (Node 4).")
+    sp_io.add_argument("--set", metavar="MASK",
+                       help="Set Dout0..3 from a bitmask (e.g. 0x08).")
+    sp_io.add_argument("--backlight", choices=["on", "off"],
+                       help="Switch the Edge-Backlight relay (Dout3).")
+    sp_io.set_defaults(func=cmd_io)
+
+    sp_fan = sub.add_parser("fan", parents=[common],
+                            help="Control the mcDSA-E60 fan/servo drive (Node 1).")
+    sp_fan.add_argument("--start", action="store_true",
+                        help="Enable the drive (velocity mode).")
+    sp_fan.add_argument("--stop", action="store_true",
+                        help="Stop and disable the drive.")
+    sp_fan.add_argument("--speed", type=int, default=None,
+                        help="Target velocity (implies --start).")
+    sp_fan.add_argument("--reset-fault", action="store_true",
+                        help="Clear a latched drive fault first.")
+    sp_fan.set_defaults(func=cmd_fan)
 
     return p
 

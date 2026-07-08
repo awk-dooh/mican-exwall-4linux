@@ -251,6 +251,12 @@ with MiCanStick2(port="/dev/mican0") as stick:
 
 Run it with `python3 keep_totem_happy.py`. Press Ctrl-C to stop.
 
+> **Prefer not to write code?** The same actions are available as one-liners:
+> `mican io --backlight on`, `mican fan --start --speed 30000`, `mican fan
+> --stop`. And a ready-made supervisor lives at
+> [examples/keep_totem_happy.py](examples/keep_totem_happy.py) — run it with
+> `--dry-run` first to watch without switching anything.
+
 ---
 
 ## 5. "Which number is which?" cheat-sheet

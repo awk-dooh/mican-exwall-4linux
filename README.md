@@ -239,6 +239,27 @@ Supported bitrates (bit/s): **1000000, 800000, 500000, 250000, 125000, 100000,
 
 Add `-v` or `-vv` for more logging.
 
+### Totem device shortcuts
+
+For the Exwall totem there are two convenience subcommands (see
+[MICONTROL_4_DUMMIES.md](MICONTROL_4_DUMMIES.md)):
+
+```bash
+# mcIO-K1 (Node 4): switch the Edge-Backlight relay and show all I/O
+mican io --backlight on   --bitrate 1000000
+mican io --backlight off  --bitrate 1000000
+mican io --set 0x0F       --bitrate 1000000    # drive Dout0..3 from a bitmask
+
+# mcDSA-E60 (Node 1): run/stop the cooling fan and read status + temp sensor
+mican fan --start --speed 30000 --bitrate 1000000
+mican fan --stop  --bitrate 1000000
+mican fan --reset-fault --bitrate 1000000
+```
+
+A full worked supervisor is in
+[examples/keep_totem_happy.py](examples/keep_totem_happy.py)
+(run with `--dry-run` first to observe without switching anything).
+
 ---
 
 ## 7. Use it as a Python library

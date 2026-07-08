@@ -1,0 +1,31 @@
+# systemd service template for the Exwall totem supervisor.
+#
+# Do NOT edit and copy this by hand — run:  sudo ./scripts/install_service.sh
+# which fills in the @PLACEHOLDERS@ with the real install paths and user.
+#
+# Runs examples/keep_totem_happy.py continuously on the NUC. The driver's
+# serial transport self-heals, and systemd restarts the unit if it ever exits.
+
+[Unit]
+Description=Exwall totem supervisor (miCAN-Stick2 -> mcDSA-E60 / mcIO-K1)
+Documentation=https://github.com/awk-dooh/mican-exwall-4linux
+After=multi-user.target
+Wants=multi-user.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=dialout
+WorkingDirectory=@WORKDIR@
+ExecStart=@VENV@/bin/python @WORKDIR@/examples/keep_totem_happy.py --port @PORT@ --bitrate 1000000
+Restart=always
+RestartSec=5
+# Give the USB/serial device a moment if it is not present yet at boot.
+StartLimitIntervalSec=0
+# Basic hardening (the process only needs the serial port).
+NoNewPrivileges=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

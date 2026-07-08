@@ -260,6 +260,27 @@ A full worked supervisor is in
 [examples/keep_totem_happy.py](examples/keep_totem_happy.py)
 (run with `--dry-run` first to observe without switching anything).
 
+### Run the supervisor as a service (auto-start on boot)
+
+To have the totem supervisor start automatically and restart on failure, install
+it as a systemd service (after `scripts/install.sh` has created the venv):
+
+```bash
+sudo bash scripts/install_service.sh                 # uses /dev/mican0
+sudo bash scripts/install_service.sh --port /dev/ttyUSB0
+
+# manage it
+systemctl status mican-totem.service
+journalctl -u mican-totem.service -f                 # live logs
+sudo systemctl restart mican-totem.service
+sudo bash scripts/install_service.sh --uninstall
+```
+
+The installer fills the real paths/user into
+[systemd/mican-totem.service.in](systemd/mican-totem.service.in), enables the
+unit, and starts it. The driver's serial transport self-heals, and systemd
+restarts the process if it ever exits.
+
 ---
 
 ## 7. Use it as a Python library
@@ -401,9 +422,15 @@ mican_stick2/
   __main__.py     `python -m mican_stick2`
 scripts/
   install.sh      monkey-proof installer (venv, deps, dialout, udev, self-test)
+  install_service.sh  install the totem supervisor as a systemd service
   setup_vcan.sh   create/bring up a vcan interface for the bridge
+systemd/
+  mican-totem.service.in   service template (filled in by install_service.sh)
+examples/
+  keep_totem_happy.py      worked totem supervisor (backlight + fan + sensor)
 tests/
   test_protocol.py  offline protocol tests (no hardware needed)
+  test_cli.py       offline tests for the io/fan CLI commands
 pyproject.toml    packaging + the `mican` console script
 requirements.txt  runtime dependencies
 ```
